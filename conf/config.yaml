@@ -1,0 +1,14 @@
+defaults:
+  - _self_
+
+paths:
+  root: null
+  data: ${paths.root}/data
+  external: ${paths.data}/external
+  interim_data: ${paths.data}/interim
+  processed_data: ${paths.data}/processed
+  raw_data: ${paths.data}/raw
+
+dataset:
+  url: https://github.com/karpathy/ng-video-lecture/raw/master/input.txt
+  filename: input.txt

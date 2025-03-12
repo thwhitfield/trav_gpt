@@ -1,5 +1,6 @@
 # Data
 /data/
+outputs/
 
 # Mac OS-specific storage files
 .DS_Store

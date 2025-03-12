@@ -1,0 +1,15 @@
+name: trav_gpt
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - typer
+  - loguru
+  - tqdm
+  - black
+  - flake8
+  - isort
+  - pip:
+    - python-dotenv
+    - -e .

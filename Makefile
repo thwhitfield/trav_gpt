@@ -6,3 +6,5 @@ save-environment:
 load-environment:
 	conda env create -f setup/environment.yml
 
+kill-port-5000:
+	kill -9 $$(lsof -t -i:5000)

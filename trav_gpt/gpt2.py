@@ -24,7 +24,7 @@ logging.basicConfig(
 EVAL_ITERS = 200
 LEARNING_RATE = 1e-2
 MAX_ITERS = 3000
-EMBED_SIZE = 10
+EMBED_SIZE = 32
 EVAL_INTERVAL = 300
 CONTEXT_SIZE = 8
 BATCH_SIZE = 4
@@ -144,6 +144,66 @@ class BigramLanguageModel(nn.Module):
         return idx
 
 
+# add a single attention head
+
+
+class Head(nn.Module):
+
+    def __init__(self, head_size):
+        super().__init__()
+
+        # The all important key, query, and value weights. No bias is added to
+        # these values because they are just there to allow for us to calculate
+        # attention
+        self.key = nn.Linear(EMBED_SIZE, head_size, bias=False)
+        self.query = nn.Linear(EMBED_SIZE, head_size, bias=False)
+        self.value = nn.Linear(EMBED_SIZE, head_size, bias=False)
+        self.register_buffer("tril", torch.tril(torch.ones(CONTEXT_SIZE, CONTEXT_SIZE)))
+
+        # I'll add dropout shortly
+
+    def forward(self, x):
+        # input of size (batch, time-step, channels)
+        # output of size (batch, time-step, head size)
+        B, T, C = x.shape
+        k = self.key(x)  # (B, T, hs)
+        q = self.query(x)  # (B, T, hs)
+        v = self.value(x)  # (B, T, hs)
+
+        # compute the attention scores
+        wei = (
+            # Matrix multiply the query matrix with the transpose of the k matrix
+            # k.transpose(-2, -1) -> (B, hs, T)
+            q
+            @ k.transpose(-2, -1)
+            * k.shape[-1] ** -0.5
+        )
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+
+        out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+        return out
+
+
+class MultiHeadAttention(nn.Module):
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+
+        # Ok, we'll use the Head class from above, and we'll just be setting this part of the
+        # transformer block up to run multiple heads in parallel.
+
+        # The code to do that will be just a loop through the heads and c
+
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+
+        return out
+
+
 class GPTLanguageModel(nn.Module):
 
     def __init__(self, vocab_size):
@@ -155,6 +215,9 @@ class GPTLanguageModel(nn.Module):
         self.position_embedding_table = nn.Embedding(
             num_embeddings=CONTEXT_SIZE, embedding_dim=EMBED_SIZE
         )
+
+        # self.sa = Head(head_size=EMBED_SIZE)
+        self.sa = MultiHeadAttention(num_heads=4, head_size=EMBED_SIZE // 4)
 
         self.fc1 = nn.Linear(EMBED_SIZE, vocab_size)
 
@@ -170,8 +233,7 @@ class GPTLanguageModel(nn.Module):
         # know to properly add the pos emb to just the T,C part of each tensor
         x = tok_emb + pos_emb
 
-        if TEST:
-            logging.info(f"x shape: {x.shape}")
+        x = self.sa(x)
 
         x = self.fc1(x)
 

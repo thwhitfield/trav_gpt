@@ -30,6 +30,7 @@ CONTEXT_SIZE = 8
 BATCH_SIZE = 4
 OUTPUT_LENGTH = 1000  # Length of generated text
 TEST = False
+NUM_HEADS = 4
 
 device = "cpu"
 
@@ -204,6 +205,36 @@ class MultiHeadAttention(nn.Module):
         return out
 
 
+class FeedForward(nn.Module):
+    """This is the feedforward (dense) portion of each transformer block. Now that I have this
+    simple part of it coded up, I just need to wrap everything together into a single block."""
+
+    def __init__(self, n_embd):
+        super().__init__()
+
+        self.ffwd = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd), nn.ReLU(), nn.Linear(4 * n_embd, n_embd)
+        )
+
+    def forward(self, x):
+        return self.ffwd(x)
+
+
+class Block(nn.Module):
+
+    def __init__(self, n_embd, num_heads):
+        super().__init__()
+
+        head_size = n_embd // num_heads
+        self.mha = MultiHeadAttention(num_heads=num_heads, head_size=head_size)
+        self.ffwd = FeedForward(n_embd)
+
+    def forward(self, x):
+        x = self.mha(x)
+        x = self.ffwd(x)
+        return x
+
+
 class GPTLanguageModel(nn.Module):
 
     def __init__(self, vocab_size):
@@ -217,9 +248,17 @@ class GPTLanguageModel(nn.Module):
         )
 
         # self.sa = Head(head_size=EMBED_SIZE)
-        self.sa = MultiHeadAttention(num_heads=4, head_size=EMBED_SIZE // 4)
+        # self.sa = MultiHeadAttention(num_heads=4, head_size=EMBED_SIZE // 4)
+        # self.ffwd = FeedForward(EMBED_SIZE)
 
-        self.fc1 = nn.Linear(EMBED_SIZE, vocab_size)
+        self.blocks = nn.Sequential(
+            Block(EMBED_SIZE, NUM_HEADS),
+            Block(EMBED_SIZE, NUM_HEADS),
+            Block(EMBED_SIZE, NUM_HEADS),
+            Block(EMBED_SIZE, NUM_HEADS),
+        )
+
+        self.lm_head = nn.Linear(EMBED_SIZE, vocab_size)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
@@ -233,11 +272,12 @@ class GPTLanguageModel(nn.Module):
         # know to properly add the pos emb to just the T,C part of each tensor
         x = tok_emb + pos_emb
 
-        x = self.sa(x)
+        # x = self.sa(x)
+        # x = self.ffwd(x)
 
-        x = self.fc1(x)
+        x = self.blocks(x)
 
-        logits = x  # (B,T,C)
+        logits = self.lm_head(x)
 
         if targets is None:
             loss = None

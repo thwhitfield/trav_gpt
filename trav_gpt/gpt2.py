@@ -22,17 +22,19 @@ logging.basicConfig(
 )
 
 EVAL_ITERS = 200
-LEARNING_RATE = 1e-2
+LEARNING_RATE = 1e-3
 MAX_ITERS = 3000
-EMBED_SIZE = 32
+EMBED_SIZE = 384
 EVAL_INTERVAL = 300
-CONTEXT_SIZE = 8
-BATCH_SIZE = 4
-OUTPUT_LENGTH = 1000  # Length of generated text
+CONTEXT_SIZE = 256
+BATCH_SIZE = 64
+OUTPUT_LENGTH = 2000  # Length of generated text
 TEST = False
-NUM_HEADS = 4
+NUM_HEADS = 6
+NUM_LAYERS = 6
+DROPOUT = 0.2
 
-device = "cpu"
+device = "mps"
 
 
 class CharTokenizer:
@@ -145,9 +147,6 @@ class BigramLanguageModel(nn.Module):
         return idx
 
 
-# add a single attention head
-
-
 class Head(nn.Module):
 
     def __init__(self, head_size):
@@ -161,6 +160,7 @@ class Head(nn.Module):
         self.value = nn.Linear(EMBED_SIZE, head_size, bias=False)
         self.register_buffer("tril", torch.tril(torch.ones(CONTEXT_SIZE, CONTEXT_SIZE)))
 
+        self.dropout = nn.Dropout(DROPOUT)
         # I'll add dropout shortly
 
     def forward(self, x):
@@ -181,6 +181,7 @@ class Head(nn.Module):
         )
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        wei = self.dropout(wei)
 
         out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
         return out
@@ -197,10 +198,14 @@ class MultiHeadAttention(nn.Module):
         # The code to do that will be just a loop through the heads and c
 
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(head_size * num_heads, EMBED_SIZE)
+        self.dropout = nn.Dropout(DROPOUT)
 
     def forward(self, x):
 
         out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.proj(out)
+        out = self.dropout(out)
 
         return out
 
@@ -228,10 +233,12 @@ class Block(nn.Module):
         head_size = n_embd // num_heads
         self.mha = MultiHeadAttention(num_heads=num_heads, head_size=head_size)
         self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = self.mha(x)
-        x = self.ffwd(x)
+        x = x + self.mha(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
         return x
 
 
@@ -251,20 +258,14 @@ class GPTLanguageModel(nn.Module):
         # self.sa = MultiHeadAttention(num_heads=4, head_size=EMBED_SIZE // 4)
         # self.ffwd = FeedForward(EMBED_SIZE)
 
-        self.blocks = nn.Sequential(
-            Block(EMBED_SIZE, NUM_HEADS),
-            Block(EMBED_SIZE, NUM_HEADS),
-            Block(EMBED_SIZE, NUM_HEADS),
-            Block(EMBED_SIZE, NUM_HEADS),
-        )
+        self.blocks = nn.Sequential(*[Block(EMBED_SIZE, NUM_HEADS) for _ in range(NUM_LAYERS)])
 
+        self.ln_f = nn.LayerNorm(EMBED_SIZE)
         self.lm_head = nn.Linear(EMBED_SIZE, vocab_size)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
 
-        if TEST:
-            logging.info(f"idx shape: {idx.shape}")
         tok_emb = self.token_embedding_table(idx)  # (B,T,C)
         pos_emb = self.position_embedding_table(torch.arange(T, device=device))  # (T,C)
 
@@ -272,10 +273,8 @@ class GPTLanguageModel(nn.Module):
         # know to properly add the pos emb to just the T,C part of each tensor
         x = tok_emb + pos_emb
 
-        # x = self.sa(x)
-        # x = self.ffwd(x)
-
         x = self.blocks(x)
+        x = self.ln_f(x)
 
         logits = self.lm_head(x)
 
